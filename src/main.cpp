@@ -329,7 +329,12 @@ void loopAndrea() {
 
     // If your sensor is ACTIVE-LOW (common with INPUT_PULLUP-style wiring),
     // set these to true to invert the raw value.
+    // Sensor polarity:
+    // If animations are ON even when the sensors are "inactive", the signal is inverted.
+    // Set ACTIVE_LOW to false when "active" corresponds to a higher ADC value.
     constexpr bool WATER_ACTIVE_LOW = false;
+    // Fire sensor on this setup behaves as active-low (idle high, active low),
+    // so we invert it before applying thresholds/animations.
     constexpr bool FIRE_ACTIVE_LOW = true;
     const int waterEffRaw = WATER_ACTIVE_LOW ? (4095 - waterRaw) : waterRaw;
     const int fireEffRaw = FIRE_ACTIVE_LOW ? (4095 - fireRaw) : fireRaw;
@@ -352,13 +357,13 @@ void loopAndrea() {
     waterState = hysteresis01(waterEffRaw, waterState, WATER_TH_ON, WATER_TH_OFF);
     fireState = hysteresis01(fireEffRaw, fireState, FIRE_TH_ON, FIRE_TH_OFF);
 
-    // Unity contract (match Elias):
+    // Unity contract (Andrea mode):
     // - /water: single int 0..4095 (raw)
-    // - /fire:  single int 0..4095 (raw)
+    // - /fire:  single int 0/1 (digital: 0=OFF, 1=ON)
     // - /fsr:   single int 0..4095 (raw)
-    // Note: waterState/fireState are still kept for OLED animations.
+    // Note: waterState/fireState are still kept for OLED animations (and fireState is also sent).
     sendWater(waterRaw);
-    sendFire(fireRaw);
+    sendFire(fireState);
     sendFSR(fsrReading);
 
     // Joystick (same contract as Elias):
