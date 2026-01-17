@@ -50,6 +50,82 @@ String game = "andrea";
 
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+// --- Move buttons (WASD-like) ---
+// Buttons are wired as INPUT_PULLUP: LOW = pressed.
+constexpr unsigned long kMoveButtonDebounceMs = 25;
+constexpr unsigned long kMoveResendIntervalMs = 80; // safety resend to avoid "stuck" states on packet loss
+
+// Forward declaration (sendMove is defined later in the file)
+void sendMove(int left, int right, int forward, int back);
+
+struct DebouncedMoveButton
+{
+  uint8_t pin;
+  bool stablePressed;   // debounced state (true = pressed)
+  bool lastRawPressed;  // last raw read
+  unsigned long lastEdgeMs;
+};
+
+static bool updateDebounced(DebouncedMoveButton &b, unsigned long nowMs)
+{
+  const bool rawPressed = (digitalRead(b.pin) == LOW);
+  bool changed = false;
+
+  if (rawPressed != b.lastRawPressed)
+  {
+    b.lastRawPressed = rawPressed;
+    b.lastEdgeMs = nowMs;
+  }
+
+  if ((nowMs - b.lastEdgeMs) >= kMoveButtonDebounceMs && b.stablePressed != rawPressed)
+  {
+    b.stablePressed = rawPressed;
+    changed = true;
+  }
+
+  return changed;
+}
+
+static void handleMoveButtons(unsigned long nowMs)
+{
+  static bool inited = false;
+  static unsigned long lastSendMs = 0;
+
+  static DebouncedMoveButton left{(uint8_t)moveLeftBlueButton, false, false, 0};
+  static DebouncedMoveButton right{(uint8_t)moveRightYellowButton, false, false, 0};
+  static DebouncedMoveButton forward{(uint8_t)moveForwardWhiteButton, false, false, 0};
+  static DebouncedMoveButton back{(uint8_t)moveBackGreenButton, false, false, 0};
+
+  if (!inited)
+  {
+    // Seed with current raw reads to avoid spurious "edge" on startup.
+    left.lastRawPressed = left.stablePressed = (digitalRead(left.pin) == LOW);
+    right.lastRawPressed = right.stablePressed = (digitalRead(right.pin) == LOW);
+    forward.lastRawPressed = forward.stablePressed = (digitalRead(forward.pin) == LOW);
+    back.lastRawPressed = back.stablePressed = (digitalRead(back.pin) == LOW);
+
+    left.lastEdgeMs = right.lastEdgeMs = forward.lastEdgeMs = back.lastEdgeMs = nowMs;
+    lastSendMs = 0;
+    inited = true;
+
+    sendMove((int)left.stablePressed, (int)right.stablePressed, (int)forward.stablePressed, (int)back.stablePressed);
+    lastSendMs = nowMs;
+    return;
+  }
+
+  const bool changed =
+      updateDebounced(left, nowMs) |
+      updateDebounced(right, nowMs) |
+      updateDebounced(forward, nowMs) |
+      updateDebounced(back, nowMs);
+
+  if (changed || (nowMs - lastSendMs) >= kMoveResendIntervalMs)
+  {
+    sendMove((int)left.stablePressed, (int)right.stablePressed, (int)forward.stablePressed, (int)back.stablePressed);
+    lastSendMs = nowMs;
+  }
+}
+
 // --- Simple OLED animations (Andrea mode only) ---
 // Monochrome, drawn with Adafruit_GFX primitives (no bitmaps needed).
 static void drawFaucetAnim(int x, int y, uint8_t frame)
@@ -273,12 +349,8 @@ void loopElias()
     oled.display();
   }
 
-  int moveLeft = digitalRead(moveLeftBlueButton) == LOW;
-  int moveRight = digitalRead(moveRightYellowButton) == LOW;
-  int moveFwd = digitalRead(moveForwardWhiteButton) == LOW;
-  int moveBack = digitalRead(moveBackGreenButton) == LOW;
-
-  sendMove(moveLeft, moveRight, moveFwd, moveBack);
+  // Move buttons (WASD-like)
+  handleMoveButtons(currentMillis);
 }
 
 void loopAndrea() {
@@ -449,6 +521,9 @@ void loopAndrea() {
     }
     oled.display();
   }
+
+  // Move buttons (WASD-like)
+  handleMoveButtons(currentMillis);
 };
 
 void loop()
