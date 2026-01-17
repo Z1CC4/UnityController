@@ -327,22 +327,42 @@ void loopAndrea() {
     const int waterRaw = analogRead(waterPin);
     const int fireRaw = analogRead(firePin);
 
-    // If your sensor is ACTIVE-LOW (common with INPUT_PULLUP-style wiring),
-    // set these to true to invert the raw value.
-    // Sensor polarity:
-    // If animations are ON even when the sensors are "inactive", the signal is inverted.
-    // Set ACTIVE_LOW to false when "active" corresponds to a higher ADC value.
-    constexpr bool WATER_ACTIVE_LOW = false;
+    // --- Water display state (0/1) ---
+    // Keep /water as RAW for Unity, but derive a robust ON/OFF state for the OLED animation.
+    // This avoids polarity guesswork: we detect "water present" as a significant deviation from the idle baseline.
+    static int waterBaseline = -1;
+    if (waterBaseline < 0)
+    {
+      waterBaseline = waterRaw;
+    }
+    const int waterDiff = abs(waterRaw - waterBaseline);
+    constexpr int WATER_DELTA_ON = 300;   // tune if needed
+    constexpr int WATER_DELTA_OFF = 200;  // tune if needed (must be < ON)
+    if (waterState == 0)
+    {
+      // Slowly track baseline while idle (helps with drift)
+      waterBaseline = (waterBaseline * 15 + waterRaw) / 16;
+      if (waterDiff > WATER_DELTA_ON)
+      {
+        waterState = 1;
+      }
+    }
+    else
+    {
+      if (waterDiff < WATER_DELTA_OFF)
+      {
+        waterState = 0;
+      }
+    }
+
+    // --- Fire polarity + state (0/1) ---
     // Fire sensor on this setup behaves as active-low (idle high, active low),
     // so we invert it before applying thresholds/animations.
     constexpr bool FIRE_ACTIVE_LOW = true;
-    const int waterEffRaw = WATER_ACTIVE_LOW ? (4095 - waterRaw) : waterRaw;
     const int fireEffRaw = FIRE_ACTIVE_LOW ? (4095 - fireRaw) : fireRaw;
 
     // Threshold + hysteresis to convert to ON/OFF (0/1)
     // Tune these values if needed (TH_OFF < TH_ON to avoid flicker).
-    constexpr int WATER_TH_ON = 2500;
-    constexpr int WATER_TH_OFF = 2200;
     constexpr int FIRE_TH_ON = 2500;
     constexpr int FIRE_TH_OFF = 2200;
 
@@ -354,7 +374,6 @@ void loopAndrea() {
       return (raw < thOff) ? 0 : 1;
     };
 
-    waterState = hysteresis01(waterEffRaw, waterState, WATER_TH_ON, WATER_TH_OFF);
     fireState = hysteresis01(fireEffRaw, fireState, FIRE_TH_ON, FIRE_TH_OFF);
 
     // Unity contract (Andrea mode):
