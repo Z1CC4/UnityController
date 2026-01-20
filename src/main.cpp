@@ -126,26 +126,18 @@ static void handleMoveButtons(unsigned long nowMs)
   }
 }
 
-// --- Simple OLED animations (Andrea mode only) ---
-// Monochrome, drawn with Adafruit_GFX primitives (no bitmaps needed).
 static void drawFaucetAnim(int x, int y, uint8_t frame)
 {
-  // Bounding box: ~56x36 (fits well on 128x64)
-  // Faucet body (simple stylized shape)
   oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE);   // main body
   oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);         // base block
 
-  // Vertical pipe + top cap
   oled.fillRect(x + 14, y + 2, 6, 6, SSD1306_WHITE);
   oled.drawRect(x + 12, y + 0, 10, 4, SSD1306_WHITE);
 
-  // Spout to the right with a little down nozzle
   oled.fillRect(x + 30, y + 10, 16, 5, SSD1306_WHITE);
   oled.fillRect(x + 44, y + 12, 4, 10, SSD1306_WHITE);
   oled.drawRect(x + 42, y + 11, 8, 12, SSD1306_WHITE);
 
-  // Water drops (animated)
-  // frame 0/1/2 shifts drops downward to simulate flow
   const int dy = (frame % 3) * 3;
   const int dx = (frame % 2) ? 1 : 0;
   oled.fillCircle(x + 46 + dx, y + 26 + dy, 2, SSD1306_WHITE);
@@ -155,19 +147,14 @@ static void drawFaucetAnim(int x, int y, uint8_t frame)
 
 static void drawFlameAnim(int x, int y, uint8_t frame)
 {
-  // Bounding box: ~48x40
-  // Flicker by slightly shifting the top point left/right and changing height.
   const int shift = (frame == 1) ? -2 : (frame == 2) ? 2 : 0;
   const int topY = y + ((frame == 1) ? 2 : (frame == 2) ? 0 : 1);
 
-  // Outer flame (filled)
   oled.fillTriangle(x + 24 + shift, topY, x + 6, y + 28, x + 42, y + 28, SSD1306_WHITE);
   oled.fillTriangle(x + 24 - shift, topY + 10, x + 10, y + 34, x + 38, y + 34, SSD1306_WHITE);
 
-  // Cut a small inner hollow to create "two-tone" feel (erase with BLACK)
   oled.fillTriangle(x + 24 + shift, topY + 12, x + 16, y + 28, x + 32, y + 28, SSD1306_BLACK);
 
-  // Little ember/spark (optional subtle animation)
   if (frame == 2)
   {
     oled.drawPixel(x + 10, y + 10, SSD1306_WHITE);
@@ -247,8 +234,6 @@ void setup()
   // WiFi Setup
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid, password);
-  Serial.print("AP IP address: ");
-  Serial.println(WiFi.softAPIP());
 
   // UDP Setup
   outUDP.begin(outPort);
@@ -355,15 +340,12 @@ void loopElias()
 
 void loopAndrea() {
   unsigned long currentMillis = millis();
-  // Persisted binary states for display + OSC
   static int waterState = 0;
   static int fireState = 0;
-  // Local display timing (so we don't interfere with loopElias timing vars)
   static unsigned long lastDisplayUpdateAndrea = 0;
   static uint8_t faucetFrame = 0;
   static uint8_t flameFrame = 0;
 
-  // 1. Check for incoming OSC messages (heartbeat from Unity)
   int packetSize = inUDP.parsePacket();
   if (packetSize > 0)
   {
@@ -382,37 +364,30 @@ void loopAndrea() {
     }
   }
 
-  // Connection/LED state (keep behavior identical to Elias)
   if (millis() - lastHeartbeat > heartbeatTimeout)
   {
     ledState = LOW;
   }
   digitalWrite(statusLedPin, ledState);
 
-  // 2. Read and send sensor data continuously at ~16Hz
   if (currentMillis - lastSensorTime >= sensorInterval)
   {
     lastSensorTime = currentMillis;
 
-    // Raw reads (0..4095)
     const int fsrReading = analogRead(fsrPin);
     const int waterRaw = analogRead(waterPin);
     const int fireRaw = analogRead(firePin);
 
-    // --- Water display state (0/1) ---
-    // Keep /water as RAW for Unity, but derive a robust ON/OFF state for the OLED animation.
-    // This avoids polarity guesswork: we detect "water present" as a significant deviation from the idle baseline.
     static int waterBaseline = -1;
     if (waterBaseline < 0)
     {
       waterBaseline = waterRaw;
     }
     const int waterDiff = abs(waterRaw - waterBaseline);
-    constexpr int WATER_DELTA_ON = 300;   // tune if needed
-    constexpr int WATER_DELTA_OFF = 200;  // tune if needed (must be < ON)
+    constexpr int WATER_DELTA_ON = 300;
+    constexpr int WATER_DELTA_OFF = 200;
     if (waterState == 0)
     {
-      // Slowly track baseline while idle (helps with drift)
       waterBaseline = (waterBaseline * 15 + waterRaw) / 16;
       if (waterDiff > WATER_DELTA_ON)
       {
@@ -427,14 +402,9 @@ void loopAndrea() {
       }
     }
 
-    // --- Fire polarity + state (0/1) ---
-    // Fire sensor on this setup behaves as active-low (idle high, active low),
-    // so we invert it before applying thresholds/animations.
     constexpr bool FIRE_ACTIVE_LOW = true;
     const int fireEffRaw = FIRE_ACTIVE_LOW ? (4095 - fireRaw) : fireRaw;
 
-    // Threshold + hysteresis to convert to ON/OFF (0/1)
-    // Tune these values if needed (TH_OFF < TH_ON to avoid flicker).
     constexpr int FIRE_TH_ON = 2500;
     constexpr int FIRE_TH_OFF = 2200;
 
@@ -448,17 +418,10 @@ void loopAndrea() {
 
     fireState = hysteresis01(fireEffRaw, fireState, FIRE_TH_ON, FIRE_TH_OFF);
 
-    // Unity contract (Andrea mode):
-    // - /water: single int 0..4095 (raw)
-    // - /fire:  single int 0/1 (digital: 0=OFF, 1=ON)
-    // - /fsr:   single int 0..4095 (raw)
-    // Note: waterState/fireState are still kept for OLED animations (and fireState is also sent).
     sendWater(waterRaw);
     sendFire(fireState);
     sendFSR(fsrReading);
 
-    // Joystick (same contract as Elias):
-    // - /joystick: float x (-1..+1), float y (-1..+1), int button (PULLUP: 1=not pressed, 0=pressed)
     const float rawJoyX = (float)analogRead(joyStickXPin);
     const float rawJoyY = (float)analogRead(joyStickYPin);
     const float joyX = (rawJoyX - 2047.5f) / 2047.5f; // 4095/2 = 2047.5
@@ -467,9 +430,6 @@ void loopAndrea() {
     sendJoystick(joyX, joyY, joyButton);
   }
 
-  // 3. Display:
-  // - idle: keep the old 500ms refresh
-  // - when water/fire active: refresh faster to animate
   constexpr unsigned long animInterval = 150; // ~6-7 FPS
   const bool showWater = (waterState == 1);
   const bool showFire = (fireState == 1);
@@ -485,44 +445,37 @@ void loopAndrea() {
     oled.setCursor(0, 0);
     oled.println("Unity Controller");
 
-    // Footer info (kept, but compact)
     oled.setCursor(0, 56);
     oled.print("IP ");
     oled.print(WiFi.softAPIP());
     oled.print(" C:");
     oled.print(WiFi.softAPgetStationNum());
 
-    // Status line
     oled.setCursor(0, 10);
     oled.print("Water:");
     oled.print(showWater ? "ON " : "OFF");
     oled.print(" Fire:");
     oled.print(showFire ? "ON" : "OFF");
 
-    // Animations area
     if (showWater || showFire)
     {
       if (showWater && showFire)
       {
-        // Both: faucet left, flame right
         drawFaucetAnim(2, 18, faucetFrame);
         drawFlameAnim(72, 18, flameFrame);
       }
       else if (showWater)
       {
-        // Center faucet
         drawFaucetAnim(36, 18, faucetFrame);
       }
       else // showFire
       {
-        // Center flame
         drawFlameAnim(40, 18, flameFrame);
       }
     }
     oled.display();
   }
 
-  // Move buttons (WASD-like)
   handleMoveButtons(currentMillis);
 };
 
