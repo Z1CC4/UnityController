@@ -46,9 +46,121 @@ unsigned long lastSensorTime = 0;
 unsigned long lastDisplayUpdate = 0;
 const unsigned long displayInterval = 500; // Update display every 500ms
 
-String game = "elias";
+String game = "andrea";
 
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// --- Move buttons (WASD-like) ---
+// Buttons are wired as INPUT_PULLUP: LOW = pressed.
+constexpr unsigned long kMoveButtonDebounceMs = 25;
+constexpr unsigned long kMoveResendIntervalMs = 80; // safety resend to avoid "stuck" states on packet loss
+
+// Forward declaration (sendMove is defined later in the file)
+void sendMove(int left, int right, int forward, int back);
+
+struct DebouncedMoveButton
+{
+  uint8_t pin;
+  bool stablePressed;   // debounced state (true = pressed)
+  bool lastRawPressed;  // last raw read
+  unsigned long lastEdgeMs;
+};
+
+static bool updateDebounced(DebouncedMoveButton &b, unsigned long nowMs)
+{
+  const bool rawPressed = (digitalRead(b.pin) == LOW);
+  bool changed = false;
+
+  if (rawPressed != b.lastRawPressed)
+  {
+    b.lastRawPressed = rawPressed;
+    b.lastEdgeMs = nowMs;
+  }
+
+  if ((nowMs - b.lastEdgeMs) >= kMoveButtonDebounceMs && b.stablePressed != rawPressed)
+  {
+    b.stablePressed = rawPressed;
+    changed = true;
+  }
+
+  return changed;
+}
+
+static void handleMoveButtons(unsigned long nowMs)
+{
+  static bool inited = false;
+  static unsigned long lastSendMs = 0;
+
+  static DebouncedMoveButton left{(uint8_t)moveLeftBlueButton, false, false, 0};
+  static DebouncedMoveButton right{(uint8_t)moveRightYellowButton, false, false, 0};
+  static DebouncedMoveButton forward{(uint8_t)moveForwardWhiteButton, false, false, 0};
+  static DebouncedMoveButton back{(uint8_t)moveBackGreenButton, false, false, 0};
+
+  if (!inited)
+  {
+    // Seed with current raw reads to avoid spurious "edge" on startup.
+    left.lastRawPressed = left.stablePressed = (digitalRead(left.pin) == LOW);
+    right.lastRawPressed = right.stablePressed = (digitalRead(right.pin) == LOW);
+    forward.lastRawPressed = forward.stablePressed = (digitalRead(forward.pin) == LOW);
+    back.lastRawPressed = back.stablePressed = (digitalRead(back.pin) == LOW);
+
+    left.lastEdgeMs = right.lastEdgeMs = forward.lastEdgeMs = back.lastEdgeMs = nowMs;
+    lastSendMs = 0;
+    inited = true;
+
+    sendMove((int)left.stablePressed, (int)right.stablePressed, (int)forward.stablePressed, (int)back.stablePressed);
+    lastSendMs = nowMs;
+    return;
+  }
+
+  const bool changed =
+      updateDebounced(left, nowMs) |
+      updateDebounced(right, nowMs) |
+      updateDebounced(forward, nowMs) |
+      updateDebounced(back, nowMs);
+
+  if (changed || (nowMs - lastSendMs) >= kMoveResendIntervalMs)
+  {
+    sendMove((int)left.stablePressed, (int)right.stablePressed, (int)forward.stablePressed, (int)back.stablePressed);
+    lastSendMs = nowMs;
+  }
+}
+
+static void drawFaucetAnim(int x, int y, uint8_t frame)
+{
+  oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE);   // main body
+  oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);         // base block
+
+  oled.fillRect(x + 14, y + 2, 6, 6, SSD1306_WHITE);
+  oled.drawRect(x + 12, y + 0, 10, 4, SSD1306_WHITE);
+
+  oled.fillRect(x + 30, y + 10, 16, 5, SSD1306_WHITE);
+  oled.fillRect(x + 44, y + 12, 4, 10, SSD1306_WHITE);
+  oled.drawRect(x + 42, y + 11, 8, 12, SSD1306_WHITE);
+
+  const int dy = (frame % 3) * 3;
+  const int dx = (frame % 2) ? 1 : 0;
+  oled.fillCircle(x + 46 + dx, y + 26 + dy, 2, SSD1306_WHITE);
+  oled.fillCircle(x + 42 - dx, y + 32 + ((dy + 2) % 9), 1, SSD1306_WHITE);
+  oled.fillCircle(x + 49, y + 35 + ((dy + 4) % 9), 1, SSD1306_WHITE);
+}
+
+static void drawFlameAnim(int x, int y, uint8_t frame)
+{
+  const int shift = (frame == 1) ? -2 : (frame == 2) ? 2 : 0;
+  const int topY = y + ((frame == 1) ? 2 : (frame == 2) ? 0 : 1);
+
+  oled.fillTriangle(x + 24 + shift, topY, x + 6, y + 28, x + 42, y + 28, SSD1306_WHITE);
+  oled.fillTriangle(x + 24 - shift, topY + 10, x + 10, y + 34, x + 38, y + 34, SSD1306_WHITE);
+
+  oled.fillTriangle(x + 24 + shift, topY + 12, x + 16, y + 28, x + 32, y + 28, SSD1306_BLACK);
+
+  if (frame == 2)
+  {
+    oled.drawPixel(x + 10, y + 10, SSD1306_WHITE);
+    oled.drawPixel(x + 38, y + 12, SSD1306_WHITE);
+  }
+}
 
 // OSC Sende-Funktionen
 void sendFSR(int fsr)
@@ -122,8 +234,6 @@ void setup()
   // WiFi Setup
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid, password);
-  Serial.print("AP IP address: ");
-  Serial.println(WiFi.softAPIP());
 
   // UDP Setup
   outUDP.begin(outPort);
@@ -224,16 +334,149 @@ void loopElias()
     oled.display();
   }
 
-  int moveLeft = digitalRead(moveLeftBlueButton) == LOW;
-  int moveRight = digitalRead(moveRightYellowButton) == LOW;
-  int moveFwd = digitalRead(moveForwardWhiteButton) == LOW;
-  int moveBack = digitalRead(moveBackGreenButton) == LOW;
-
-  sendMove(moveLeft, moveRight, moveFwd, moveBack);
+  // Move buttons (WASD-like)
+  handleMoveButtons(currentMillis);
 }
 
 void loopAndrea() {
+  unsigned long currentMillis = millis();
+  static int waterState = 0;
+  static int fireState = 0;
+  static unsigned long lastDisplayUpdateAndrea = 0;
+  static uint8_t faucetFrame = 0;
+  static uint8_t flameFrame = 0;
 
+  int packetSize = inUDP.parsePacket();
+  if (packetSize > 0)
+  {
+    OSCMessage msg;
+    while (packetSize--)
+    {
+      msg.fill(inUDP.read());
+    }
+
+    if (!msg.hasError())
+    {
+      if (msg.fullMatch("/heartbeat"))
+      {
+        onHeartbeat();
+      }
+    }
+  }
+
+  if (millis() - lastHeartbeat > heartbeatTimeout)
+  {
+    ledState = LOW;
+  }
+  digitalWrite(statusLedPin, ledState);
+
+  if (currentMillis - lastSensorTime >= sensorInterval)
+  {
+    lastSensorTime = currentMillis;
+
+    const int fsrReading = analogRead(fsrPin);
+    const int waterRaw = analogRead(waterPin);
+    const int fireRaw = analogRead(firePin);
+
+    static int waterBaseline = -1;
+    if (waterBaseline < 0)
+    {
+      waterBaseline = waterRaw;
+    }
+    const int waterDiff = abs(waterRaw - waterBaseline);
+    constexpr int WATER_DELTA_ON = 300;
+    constexpr int WATER_DELTA_OFF = 200;
+    if (waterState == 0)
+    {
+      waterBaseline = (waterBaseline * 15 + waterRaw) / 16;
+      if (waterDiff > WATER_DELTA_ON)
+      {
+        waterState = 1;
+      }
+    }
+    else
+    {
+      if (waterDiff < WATER_DELTA_OFF)
+      {
+        waterState = 0;
+      }
+    }
+
+    constexpr bool FIRE_ACTIVE_LOW = true;
+    const int fireEffRaw = FIRE_ACTIVE_LOW ? (4095 - fireRaw) : fireRaw;
+
+    constexpr int FIRE_TH_ON = 2500;
+    constexpr int FIRE_TH_OFF = 2200;
+
+    auto hysteresis01 = [](int raw, int prevState, int thOn, int thOff) -> int {
+      if (prevState == 0)
+      {
+        return (raw > thOn) ? 1 : 0;
+      }
+      return (raw < thOff) ? 0 : 1;
+    };
+
+    fireState = hysteresis01(fireEffRaw, fireState, FIRE_TH_ON, FIRE_TH_OFF);
+
+    sendWater(waterRaw);
+    sendFire(fireState);
+    sendFSR(fsrReading);
+
+    const float rawJoyX = (float)analogRead(joyStickXPin);
+    const float rawJoyY = (float)analogRead(joyStickYPin);
+    const float joyX = (rawJoyX - 2047.5f) / 2047.5f; // 4095/2 = 2047.5
+    const float joyY = (rawJoyY - 2047.5f) / 2047.5f;
+    const int joyButton = digitalRead(buttonPinJoyStick);
+    sendJoystick(joyX, joyY, joyButton);
+  }
+
+  constexpr unsigned long animInterval = 150; // ~6-7 FPS
+  const bool showWater = (waterState == 1);
+  const bool showFire = (fireState == 1);
+  const unsigned long wantedInterval = (showWater || showFire) ? animInterval : displayInterval;
+
+  if (currentMillis - lastDisplayUpdateAndrea >= wantedInterval)
+  {
+    lastDisplayUpdateAndrea = currentMillis;
+    faucetFrame = (uint8_t)((faucetFrame + 1) % 3);
+    flameFrame = (uint8_t)((flameFrame + 1) % 3);
+
+    oled.clearDisplay();
+    oled.setCursor(0, 0);
+    oled.println("Unity Controller");
+
+    oled.setCursor(0, 56);
+    oled.print("IP ");
+    oled.print(WiFi.softAPIP());
+    oled.print(" C:");
+    oled.print(WiFi.softAPgetStationNum());
+
+    oled.setCursor(0, 10);
+    oled.print("Water:");
+    oled.print(showWater ? "ON " : "OFF");
+    oled.print(" Fire:");
+    oled.print(showFire ? "ON" : "OFF");
+
+    if (showWater || showFire)
+    {
+      if (showWater && showFire)
+      {
+        drawFaucetAnim(2, 18, faucetFrame);
+        drawFlameAnim(72, 18, flameFrame);
+      }
+      else if (showWater)
+      {
+        drawFaucetAnim(36, 18, faucetFrame);
+      }
+      else // showFire
+      {
+        drawFlameAnim(40, 18, flameFrame);
+      }
+    }
+    oled.display();
+  }
+
+  handleMoveButtons(currentMillis);
 };
 
 void loop()
