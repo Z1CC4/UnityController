@@ -21,21 +21,21 @@ const unsigned int inPort = 6666;
 #define OLED_RESET -1
 #define SCREEN_ADDRESS 0x3D
 
-const int fsrPin = A2;          
-const int waterPin = 37;         
-const int firePin = 32;          
+const int fsrPin = A2;
+const int waterPin = 37;
+const int firePin = 32;
 const int buttonPinJoyStick = 14;
-const int joyStickXPin = A3;     
-const int joyStickYPin = A4;    
+const int joyStickXPin = A3;
+const int joyStickYPin = A4;
 
 // Buttons - alle verschiedene Pins!
-const int moveLeftBlueButton =  12; //13; 27
-const int moveRightYellowButton =  13; //27; 13
-const int moveBackGreenButton = 33; //12;  33
-const int moveForwardWhiteButton = 27;  //33; 12
+const int moveLeftBlueButton = 12;     // 13; 27
+const int moveRightYellowButton = 13;  // 27; 13
+const int moveBackGreenButton = 33;    // 12;  33
+const int moveForwardWhiteButton = 27; // 33; 12
 
 // Status LED auf einen anderen Pin
-const int statusLedPin = 15;           
+const int statusLedPin = 15;
 unsigned long lastHeartbeat = 0;
 const unsigned long heartbeatTimeout = 1000;
 int ledState = LOW;
@@ -46,7 +46,7 @@ unsigned long lastSensorTime = 0;
 unsigned long lastDisplayUpdate = 0;
 const unsigned long displayInterval = 500; // Update display every 500ms
 
-String game = "andrea";
+String game;
 
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -61,8 +61,8 @@ void sendMove(int left, int right, int forward, int back);
 struct DebouncedMoveButton
 {
   uint8_t pin;
-  bool stablePressed;   // debounced state (true = pressed)
-  bool lastRawPressed;  // last raw read
+  bool stablePressed;  // debounced state (true = pressed)
+  bool lastRawPressed; // last raw read
   unsigned long lastEdgeMs;
 };
 
@@ -128,8 +128,8 @@ static void handleMoveButtons(unsigned long nowMs)
 
 static void drawFaucetAnim(int x, int y, uint8_t frame)
 {
-  oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE);   // main body
-  oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);         // base block
+  oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE); // main body
+  oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);        // base block
 
   oled.fillRect(x + 14, y + 2, 6, 6, SSD1306_WHITE);
   oled.drawRect(x + 12, y + 0, 10, 4, SSD1306_WHITE);
@@ -147,8 +147,10 @@ static void drawFaucetAnim(int x, int y, uint8_t frame)
 
 static void drawFlameAnim(int x, int y, uint8_t frame)
 {
-  const int shift = (frame == 1) ? -2 : (frame == 2) ? 2 : 0;
-  const int topY = y + ((frame == 1) ? 2 : (frame == 2) ? 0 : 1);
+  const int shift = (frame == 1) ? -2 : (frame == 2) ? 2
+                                                     : 0;
+  const int topY = y + ((frame == 1) ? 2 : (frame == 2) ? 0
+                                                        : 1);
 
   oled.fillTriangle(x + 24 + shift, topY, x + 6, y + 28, x + 42, y + 28, SSD1306_WHITE);
   oled.fillTriangle(x + 24 - shift, topY + 10, x + 10, y + 34, x + 38, y + 34, SSD1306_WHITE);
@@ -181,7 +183,6 @@ void sendWater(int water)
   outUDP.endPacket();
 }
 
-
 void sendFire(int fire)
 {
   OSCMessage msg("/fire");
@@ -190,7 +191,6 @@ void sendFire(int fire)
   msg.send(outUDP);
   outUDP.endPacket();
 }
-
 
 void sendJoystick(float x, float y, int button)
 {
@@ -228,7 +228,8 @@ void setup()
   if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3D))
   {
     Serial.println("SSD1306 allocation failed");
-    while (true);
+    while (true)
+      ;
   }
 
   // WiFi Setup
@@ -264,33 +265,7 @@ void loopElias()
 
   unsigned long currentMillis = millis();
 
-  // 1. Check for incoming OSC messages
-  int packetSize = inUDP.parsePacket();
-  if (packetSize > 0)
-  {
-    OSCMessage msg;
-    while (packetSize--)
-    {
-      msg.fill(inUDP.read());
-    }
-
-    if (!msg.hasError())
-    {
-      if (msg.fullMatch("/heartbeat"))
-      {
-        onHeartbeat();
-      }
-    }
-  }
-
-  if (millis() - lastHeartbeat > heartbeatTimeout)
-  {
-    ledState = LOW;
-  }
-
-  digitalWrite(statusLedPin, ledState);
-
-  // 2. Read and send sensor data at ~16Hz
+  //  Read and send sensor data at ~16Hz
   if (currentMillis - lastSensorTime >= sensorInterval)
   {
     lastSensorTime = currentMillis;
@@ -300,7 +275,6 @@ void loopElias()
     int waterReading = analogRead(waterPin);
     int fireReading = analogRead(firePin);
     Serial.println("fire " + String(fireReading));
-   
 
     // Joystick
     float rawJoyX = analogRead(joyStickXPin);
@@ -310,7 +284,6 @@ void loopElias()
     float joyX = (rawJoyX - 2047.5) / 2047.5; // 4095/2 = 2047.5
     float joyY = (rawJoyY - 2047.5) / 2047.5;
     int joyButton = digitalRead(buttonPinJoyStick);
-
 
     // Send all data via OSC
     sendFSR(fsrReading);
@@ -338,31 +311,14 @@ void loopElias()
   handleMoveButtons(currentMillis);
 }
 
-void loopAndrea() {
+void loopAndrea()
+{
   unsigned long currentMillis = millis();
   static int waterState = 0;
   static int fireState = 0;
   static unsigned long lastDisplayUpdateAndrea = 0;
   static uint8_t faucetFrame = 0;
   static uint8_t flameFrame = 0;
-
-  int packetSize = inUDP.parsePacket();
-  if (packetSize > 0)
-  {
-    OSCMessage msg;
-    while (packetSize--)
-    {
-      msg.fill(inUDP.read());
-    }
-
-    if (!msg.hasError())
-    {
-      if (msg.fullMatch("/heartbeat"))
-      {
-        onHeartbeat();
-      }
-    }
-  }
 
   if (millis() - lastHeartbeat > heartbeatTimeout)
   {
@@ -408,7 +364,8 @@ void loopAndrea() {
     constexpr int FIRE_TH_ON = 2500;
     constexpr int FIRE_TH_OFF = 2200;
 
-    auto hysteresis01 = [](int raw, int prevState, int thOn, int thOff) -> int {
+    auto hysteresis01 = [](int raw, int prevState, int thOn, int thOff) -> int
+    {
       if (prevState == 0)
       {
         return (raw > thOn) ? 1 : 0;
@@ -481,12 +438,47 @@ void loopAndrea() {
 
 void loop()
 {
+  int packetSize = inUDP.parsePacket();
+  if (packetSize > 0)
+  {
+    OSCMessage msg;
+    while (packetSize--)
+    {
+      msg.fill(inUDP.read());
+    }
+
+    if (!msg.hasError())
+    {
+      if (msg.fullMatch("/heartbeat"))
+      {
+        onHeartbeat();
+      }
+      if (msg.fullMatch("/game"))
+      {
+        if (msg.isString(0))
+        {
+          char gameName[32];
+          msg.getString(0, gameName, sizeof(gameName));
+          game = String(gameName);
+          Serial.print("Game switched to: ");
+          Serial.println(game);
+        }
+      }
+    }
+  }
+
+  if (millis() - lastHeartbeat > heartbeatTimeout)
+  {
+    ledState = LOW;
+  }
+
+  digitalWrite(statusLedPin, ledState);
 
   if (game == "elias")
   {
     loopElias();
   }
-  else
+  if (game == "Andrea")
   {
     loopAndrea();
   }
