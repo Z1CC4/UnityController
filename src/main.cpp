@@ -28,13 +28,13 @@ const int buttonPinJoyStick = 14;
 const int joyStickXPin = A3;
 const int joyStickYPin = A4;
 
-// Buttons - alle verschiedene Pins!
-const int moveLeftBlueButton = 12;     // 13; 27
-const int moveRightYellowButton = 13;  // 27; 13
-const int moveBackGreenButton = 33;    // 12;  33
-const int moveForwardWhiteButton = 27; // 33; 12
+//Buttons - alle verschiedene Pins!
+const int moveLeftBlueButton = 12;     
+const int moveRightYellowButton = 13;  
+const int moveBackGreenButton = 33;    
+const int moveForwardWhiteButton = 27; 
 
-// Status LED auf einen anderen Pin
+//Status LED auf einen anderen Pin
 const int statusLedPin = 15;
 unsigned long lastHeartbeat = 0;
 const unsigned long heartbeatTimeout = 1000;
@@ -126,6 +126,7 @@ static void handleMoveButtons(unsigned long nowMs)
   }
 }
 
+// --- Display animations --- Game Andrea ---
 static void drawFaucetAnim(int x, int y, uint8_t frame)
 {
   oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE); // main body
@@ -163,8 +164,9 @@ static void drawFlameAnim(int x, int y, uint8_t frame)
     oled.drawPixel(x + 38, y + 12, SSD1306_WHITE);
   }
 }
+// --- Display animations --- Game Andrea ---
 
-// OSC Sende-Funktionen
+// OSC sending functions
 void sendFSR(int fsr)
 {
   OSCMessage msg("/fsr");
