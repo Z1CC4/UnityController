@@ -22,6 +22,13 @@ const unsigned int inPort = 6666;
 #define SCREEN_ADDRESS 0x3D
 
 const int fsrPin = A2;
+
+const int WINDOW = 10;
+int samples[WINDOW];
+int current = 0;
+int fsrAverage = 0;
+int fsrTotal = 0;
+
 const int waterPin = 37;
 const int firePin = 32;
 const int buttonPinJoyStick = 14;
@@ -33,12 +40,10 @@ const int moveRightButton = 13;
 const int moveBackButton = 33;
 const int moveForwardButton = 27;
 
-
 const int statusLedPin = 15;
 unsigned long lastHeartbeat = 0;
 const unsigned long heartbeatTimeout = 1000;
 int ledState = LOW;
-
 
 const unsigned long sensorInterval = 62; // ~16 times per second (1000/62 ≈ 16)
 unsigned long lastSensorTime = 0;
@@ -51,8 +56,67 @@ Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // --- Move buttons (WASD-like) ---
 constexpr unsigned long kMoveButtonDebounceMs = 25;
-constexpr unsigned long kMoveResendIntervalMs = 80; 
+constexpr unsigned long kMoveResendIntervalMs = 80;
 
+// OSC sending functions
+void sendHeartbeatAck()
+{
+  OSCMessage msg("/heartbeat_ack");
+  msg.add(1);
+  outUDP.beginPacket(dstIP, outPort);
+  msg.send(outUDP);
+  outUDP.endPacket();
+}
+
+void sendFSR(int fsr)
+{
+  OSCMessage msg("/fsr");
+  msg.add(fsr);
+  outUDP.beginPacket(dstIP, outPort);
+  msg.send(outUDP);
+  outUDP.endPacket();
+}
+
+void sendWater(int water)
+{
+  OSCMessage msg("/water");
+  msg.add(water);
+  outUDP.beginPacket(dstIP, outPort);
+  msg.send(outUDP);
+  outUDP.endPacket();
+}
+
+void sendFire(int fire)
+{
+  OSCMessage msg("/fire");
+  msg.add(fire);
+  outUDP.beginPacket(dstIP, outPort);
+  msg.send(outUDP);
+  outUDP.endPacket();
+}
+
+void sendJoystick(float x, float y, int button)
+{
+  OSCMessage msg("/joystick");
+  msg.add(x);
+  msg.add(y);
+  msg.add(button);
+  outUDP.beginPacket(dstIP, outPort);
+  msg.send(outUDP);
+  outUDP.endPacket();
+}
+
+void sendMove(int left, int right, int forward, int back)
+{
+  OSCMessage msg("/move");
+  msg.add(left);
+  msg.add(right);
+  msg.add(forward);
+  msg.add(back);
+  outUDP.beginPacket(dstIP, outPort);
+  msg.send(outUDP);
+  outUDP.endPacket();
+}
 
 struct DebouncedMoveButton
 {
@@ -123,8 +187,8 @@ static void handleMoveButtons(unsigned long nowMs)
 // --- Display animations --- Game Andrea ---
 static void drawFaucetAnim(int x, int y, uint8_t frame)
 {
-  oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE); 
-  oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);        
+  oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE);
+  oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);
 
   oled.fillRect(x + 14, y + 2, 6, 6, SSD1306_WHITE);
   oled.drawRect(x + 12, y + 0, 10, 4, SSD1306_WHITE);
@@ -171,9 +235,8 @@ int g_stateFire = 0;
 static void drawPlayerCircle(int cx, int cy)
 {
   oled.fillCircle(cx, cy, 2, SSD1306_WHITE);
-  oled.drawCircle(cx, cy, 2, SSD1306_WHITE); 
+  oled.drawCircle(cx, cy, 2, SSD1306_WHITE);
 }
-
 
 static int worldToMini(float d, float range, int halfSize)
 {
@@ -298,66 +361,6 @@ void drawDisplayElias(unsigned long currentMillis)
   }
 }
 
-// OSC sending functions
-void sendHeartbeatAck()
-{
-  OSCMessage msg("/heartbeat_ack");
-  msg.add(1);
-  outUDP.beginPacket(dstIP, outPort);
-  msg.send(outUDP);
-  outUDP.endPacket();
-}
-
-void sendFSR(int fsr)
-{
-  OSCMessage msg("/fsr");
-  msg.add(fsr);
-  outUDP.beginPacket(dstIP, outPort);
-  msg.send(outUDP);
-  outUDP.endPacket();
-}
-
-void sendWater(int water)
-{
-  OSCMessage msg("/water");
-  msg.add(water);
-  outUDP.beginPacket(dstIP, outPort);
-  msg.send(outUDP);
-  outUDP.endPacket();
-}
-
-void sendFire(int fire)
-{
-  OSCMessage msg("/fire");
-  msg.add(fire);
-  outUDP.beginPacket(dstIP, outPort);
-  msg.send(outUDP);
-  outUDP.endPacket();
-}
-
-void sendJoystick(float x, float y, int button)
-{
-  OSCMessage msg("/joystick");
-  msg.add(x);
-  msg.add(y);
-  msg.add(button);
-  outUDP.beginPacket(dstIP, outPort);
-  msg.send(outUDP);
-  outUDP.endPacket();
-}
-
-void sendMove(int left, int right, int forward, int back)
-{
-  OSCMessage msg("/move");
-  msg.add(left);
-  msg.add(right);
-  msg.add(forward);
-  msg.add(back);
-  outUDP.beginPacket(dstIP, outPort);
-  msg.send(outUDP);
-  outUDP.endPacket();
-}
-
 void onHeartbeat()
 {
   lastHeartbeat = millis();
@@ -416,7 +419,17 @@ void loopElias()
     lastSensorTime = currentMillis;
 
     // Read all sensors
+    fsrTotal = fsrTotal - samples[current];
     int fsrReading = analogRead(fsrPin);
+    samples[current] = fsrReading;
+    fsrTotal = fsrTotal + samples[current];
+    current = current + 1;
+    if (current >= WINDOW)
+    {
+      current = 0;
+    }
+    fsrAverage = fsrTotal / WINDOW;
+
     int waterReading = analogRead(waterPin);
     int fireReading = analogRead(firePin);
 
@@ -430,7 +443,7 @@ void loopElias()
     int joyButton = digitalRead(buttonPinJoyStick);
 
     // Send all data via OSC
-    sendFSR(fsrReading);
+    sendFSR(fsrAverage);
     sendWater(waterReading);
     sendFire(fireReading);
     sendJoystick(joyX, joyY, joyButton);
