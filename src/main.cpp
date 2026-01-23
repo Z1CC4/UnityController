@@ -28,19 +28,18 @@ const int buttonPinJoyStick = 14;
 const int joyStickXPin = A3;
 const int joyStickYPin = A4;
 
-//Buttons - alle verschiedene Pins!
-const int moveLeftBlueButton = 12;     
-const int moveRightYellowButton = 13;  
-const int moveBackGreenButton = 33;    
-const int moveForwardWhiteButton = 27; 
+const int moveLeftButton = 12;
+const int moveRightButton = 13;
+const int moveBackButton = 33;
+const int moveForwardButton = 27;
 
-//Status LED auf einen anderen Pin
+
 const int statusLedPin = 15;
 unsigned long lastHeartbeat = 0;
 const unsigned long heartbeatTimeout = 1000;
 int ledState = LOW;
 
-// Timing
+
 const unsigned long sensorInterval = 62; // ~16 times per second (1000/62 ≈ 16)
 unsigned long lastSensorTime = 0;
 unsigned long lastDisplayUpdate = 0;
@@ -51,12 +50,9 @@ String game;
 Adafruit_SSD1306 oled(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // --- Move buttons (WASD-like) ---
-// Buttons are wired as INPUT_PULLUP: LOW = pressed.
 constexpr unsigned long kMoveButtonDebounceMs = 25;
-constexpr unsigned long kMoveResendIntervalMs = 80; // safety resend to avoid "stuck" states on packet loss
+constexpr unsigned long kMoveResendIntervalMs = 80; 
 
-// Forward declaration (sendMove is defined later in the file)
-void sendMove(int left, int right, int forward, int back);
 
 struct DebouncedMoveButton
 {
@@ -82,7 +78,6 @@ static bool updateDebounced(DebouncedMoveButton &b, unsigned long nowMs)
     b.stablePressed = rawPressed;
     changed = true;
   }
-
   return changed;
 }
 
@@ -91,14 +86,13 @@ static void handleMoveButtons(unsigned long nowMs)
   static bool inited = false;
   static unsigned long lastSendMs = 0;
 
-  static DebouncedMoveButton left{(uint8_t)moveLeftBlueButton, false, false, 0};
-  static DebouncedMoveButton right{(uint8_t)moveRightYellowButton, false, false, 0};
-  static DebouncedMoveButton forward{(uint8_t)moveForwardWhiteButton, false, false, 0};
-  static DebouncedMoveButton back{(uint8_t)moveBackGreenButton, false, false, 0};
+  static DebouncedMoveButton left{(uint8_t)moveLeftButton, false, false, 0};
+  static DebouncedMoveButton right{(uint8_t)moveRightButton, false, false, 0};
+  static DebouncedMoveButton forward{(uint8_t)moveForwardButton, false, false, 0};
+  static DebouncedMoveButton back{(uint8_t)moveBackButton, false, false, 0};
 
   if (!inited)
   {
-    // Seed with current raw reads to avoid spurious "edge" on startup.
     left.lastRawPressed = left.stablePressed = (digitalRead(left.pin) == LOW);
     right.lastRawPressed = right.stablePressed = (digitalRead(right.pin) == LOW);
     forward.lastRawPressed = forward.stablePressed = (digitalRead(forward.pin) == LOW);
@@ -129,8 +123,8 @@ static void handleMoveButtons(unsigned long nowMs)
 // --- Display animations --- Game Andrea ---
 static void drawFaucetAnim(int x, int y, uint8_t frame)
 {
-  oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE); // main body
-  oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);        // base block
+  oled.drawRoundRect(x + 6, y + 8, 26, 12, 2, SSD1306_WHITE); 
+  oled.fillRect(x + 10, y + 18, 10, 6, SSD1306_WHITE);        
 
   oled.fillRect(x + 14, y + 2, 6, 6, SSD1306_WHITE);
   oled.drawRect(x + 12, y + 0, 10, 4, SSD1306_WHITE);
@@ -164,9 +158,156 @@ static void drawFlameAnim(int x, int y, uint8_t frame)
     oled.drawPixel(x + 38, y + 12, SSD1306_WHITE);
   }
 }
-// --- Display animations --- Game Andrea ---
+
+// --- Display logic --- Game Elias ---
+
+// --- Minimap data (from Unity) ---
+float g_px = 0, g_pz = 0, g_yaw = 0;
+float g_hx = 0, g_hz = 0;
+int g_stateWater = 0;
+int g_stateFire = 0;
+
+// map drawing helpers
+static void drawPlayerCircle(int cx, int cy)
+{
+  oled.fillCircle(cx, cy, 2, SSD1306_WHITE);
+  oled.drawCircle(cx, cy, 2, SSD1306_WHITE); 
+}
+
+
+static int worldToMini(float d, float range, int halfSize)
+{
+  // clamp to [-range, +range], map to [-halfSize, +halfSize]
+  if (d > range)
+    d = range;
+  if (d < -range)
+    d = -range;
+  float k = (float)halfSize / range;
+  return (int)(d * k);
+}
+
+static void drawMinimap64()
+{
+  const int mapX = 0, mapY = 0;
+  const int mapS = 64;
+  const float worldRange = 100.0f; // show 100m x 100m world (handles coordinates from -50 to +50)
+
+  // Helper to convert world coordinates to screen coordinates
+  auto worldToScreen = [&](float wx) -> int
+  {
+    // Map from [-worldRange/2, +worldRange/2] to [0, mapS]
+    float screenX = ((wx + worldRange / 2.0f) / worldRange) * mapS;
+    return (int)screenX;
+  };
+
+  auto worldToScreenZ = [&](float wz) -> int
+  {
+    float screenZ = ((wz + worldRange / 2.0f) / worldRange) * mapS;
+    return (int)screenZ;
+  };
+
+  // border
+  oled.drawRect(mapX, mapY, mapS, mapS, SSD1306_WHITE);
+
+  // House (fixed position on map)
+  int hx = worldToScreen(g_hx);
+  int hz = worldToScreenZ(g_hz);
+  oled.drawRect(hx - 3, hz - 3, 6, 6, SSD1306_WHITE);
+
+  // Player (moves on map)
+  int px = worldToScreen(g_px);
+  int pz = worldToScreenZ(g_pz);
+  drawPlayerCircle(px, pz);
+}
+
+// right part of display drawing helpers
+static void drawWaterDropIcon(int x, int y)
+{
+  // Water drop shape - oval on top, point on bottom
+  oled.drawCircle(x + 11, y + 14, 4, SSD1306_WHITE);                               // top circle
+  oled.fillTriangle(x + 7, y + 16, x + 15, y + 16, x + 11, y + 22, SSD1306_WHITE); // bottom point
+  oled.fillCircle(x + 11, y + 14, 3, SSD1306_WHITE);                               // fill top part
+}
+
+static void drawFlameIcon(int x, int y)
+{
+  // Outer flame
+  oled.fillTriangle(x + 16, y + 6, x + 8, y + 20, x + 24, y + 20, SSD1306_WHITE);
+  oled.fillTriangle(x + 16, y + 12, x + 12, y + 18, x + 20, y + 18, SSD1306_BLACK);
+  // Small spark
+  oled.drawPixel(x + 6, y + 14, SSD1306_WHITE);
+  oled.drawPixel(x + 26, y + 15, SSD1306_WHITE);
+}
+
+static void drawFlameIconDetailed(int x, int y, uint8_t frame)
+{
+  // Dynamic flame animation
+  int wobble = (frame == 0) ? -1 : (frame == 2) ? 1
+                                                : 0;
+  int topShift = y + (frame == 1 ? 1 : 0);
+
+  // Main flame body - outer
+  oled.fillTriangle(x + 16 + wobble, topShift, x + 8, y + 18, x + 24, y + 18, SSD1306_WHITE);
+  // Secondary flame
+  oled.fillTriangle(x + 16 - wobble, topShift + 4, x + 10, y + 20, x + 22, y + 20, SSD1306_WHITE);
+  // Inner hollow
+  oled.fillTriangle(x + 16 + wobble, topShift + 6, x + 12, y + 16, x + 20, y + 16, SSD1306_BLACK);
+  // Sparks on side
+  if (frame > 0)
+  {
+    oled.drawPixel(x + 4 + frame, y + 10, SSD1306_WHITE);
+    oled.drawPixel(x + 28 - frame, y + 12, SSD1306_WHITE);
+  }
+}
+
+static void drawRightStatus(uint8_t frame)
+{
+  const int xCenter = 96; // Center of right half (70 + 64/2)
+  const int yWater = 8;   // Water in upper half
+  const int yFire = 40;   // Fire in lower half
+
+  if (g_stateWater)
+    drawFaucetAnim(xCenter - 18, yWater, frame % 3);
+  else
+  {
+    drawWaterDropIcon(xCenter - 13, yWater);
+  }
+
+  if (g_stateFire)
+    drawFlameIconDetailed(xCenter - 16, yFire, frame);
+  else
+  {
+    drawFlameIcon(xCenter - 16, yFire);
+  }
+}
+
+void drawDisplayElias(unsigned long currentMillis)
+{
+  static uint8_t uiFrame = 0;
+  static unsigned long lastDisplayUpdateElias = 0;
+
+  if (currentMillis - lastDisplayUpdateElias >= 120) // ~8 FPS
+  {
+    lastDisplayUpdateElias = currentMillis;
+    uiFrame = (uiFrame + 1) % 3;
+
+    oled.clearDisplay();
+    drawMinimap64();
+    drawRightStatus(uiFrame);
+    oled.display();
+  }
+}
 
 // OSC sending functions
+void sendHeartbeatAck()
+{
+  OSCMessage msg("/heartbeat_ack");
+  msg.add(1);
+  outUDP.beginPacket(dstIP, outPort);
+  msg.send(outUDP);
+  outUDP.endPacket();
+}
+
 void sendFSR(int fsr)
 {
   OSCMessage msg("/fsr");
@@ -249,10 +390,10 @@ void setup()
   pinMode(buttonPinJoyStick, INPUT_PULLUP);
   pinMode(joyStickXPin, INPUT);
   pinMode(joyStickYPin, INPUT);
-  pinMode(moveLeftBlueButton, INPUT_PULLUP);
-  pinMode(moveRightYellowButton, INPUT_PULLUP);
-  pinMode(moveForwardWhiteButton, INPUT_PULLUP);
-  pinMode(moveBackGreenButton, INPUT_PULLUP);
+  pinMode(moveLeftButton, INPUT_PULLUP);
+  pinMode(moveRightButton, INPUT_PULLUP);
+  pinMode(moveForwardButton, INPUT_PULLUP);
+  pinMode(moveBackButton, INPUT_PULLUP);
   pinMode(statusLedPin, OUTPUT);
 
   // Display initial setup
@@ -264,8 +405,10 @@ void setup()
 
 void loopElias()
 {
-
   unsigned long currentMillis = millis();
+
+  // display logic:
+  drawDisplayElias(currentMillis);
 
   //  Read and send sensor data at ~16Hz
   if (currentMillis - lastSensorTime >= sensorInterval)
@@ -276,13 +419,12 @@ void loopElias()
     int fsrReading = analogRead(fsrPin);
     int waterReading = analogRead(waterPin);
     int fireReading = analogRead(firePin);
-    Serial.println("fire " + String(fireReading));
 
     // Joystick
     float rawJoyX = analogRead(joyStickXPin);
     float rawJoyY = analogRead(joyStickYPin);
 
-    // Normalisiere auf -1.0 bis +1.0
+    // Normalize to -1.0 to +1.0
     float joyX = (rawJoyX - 2047.5) / 2047.5; // 4095/2 = 2047.5
     float joyY = (rawJoyY - 2047.5) / 2047.5;
     int joyButton = digitalRead(buttonPinJoyStick);
@@ -293,22 +435,6 @@ void loopElias()
     sendFire(fireReading);
     sendJoystick(joyX, joyY, joyButton);
   }
-
-  // 3. Update display less frequently (every 500ms)
-  if (currentMillis - lastDisplayUpdate >= displayInterval)
-  {
-    lastDisplayUpdate = currentMillis;
-
-    oled.clearDisplay();
-    oled.setCursor(0, 0);
-    oled.println("Unity Controller");
-    oled.print("IP: ");
-    oled.println(WiFi.softAPIP());
-    oled.print("Clients: ");
-    oled.println(WiFi.softAPgetStationNum());
-    oled.display();
-  }
-
   // Move buttons (WASD-like)
   handleMoveButtons(currentMillis);
 }
@@ -438,36 +564,68 @@ void loopAndrea()
   handleMoveButtons(currentMillis);
 };
 
-void loop()
+void handleIncomingOSC()
 {
-  int packetSize = inUDP.parsePacket();
-  if (packetSize > 0)
+  int packetSize;
+  while ((packetSize = inUDP.parsePacket()) > 0)
   {
     OSCMessage msg;
     while (packetSize--)
-    {
       msg.fill(inUDP.read());
+
+    if (msg.hasError())
+      continue;
+
+    if (msg.fullMatch("/heartbeat"))
+    {
+      onHeartbeat();
+      sendHeartbeatAck();
+      continue;
     }
 
-    if (!msg.hasError())
+    if (msg.fullMatch("/game"))
     {
-      if (msg.fullMatch("/heartbeat"))
+      if (msg.isString(0))
       {
-        onHeartbeat();
+        char gameName[32];
+        msg.getString(0, gameName, sizeof(gameName));
+        game = String(gameName);
       }
-      if (msg.fullMatch("/game"))
-      {
-        if (msg.isString(0))
-        {
-          char gameName[32];
-          msg.getString(0, gameName, sizeof(gameName));
-          game = String(gameName);
-          Serial.print("Game switched to: ");
-          Serial.println(game);
-        }
-      }
+      continue;
+    }
+
+    // --- minimap / states ---
+    if (msg.fullMatch("/map/player"))
+    {
+      g_px = msg.getFloat(0);
+      g_pz = msg.getFloat(1);
+      continue;
+    }
+
+    if (msg.fullMatch("/map/house"))
+    {
+      g_hx = msg.getFloat(0);
+      g_hz = msg.getFloat(1);
+      continue;
+    }
+
+    if (msg.fullMatch("/state/water"))
+    {
+      g_stateWater = msg.getInt(0);
+      continue;
+    }
+
+    if (msg.fullMatch("/state/fire"))
+    {
+      g_stateFire = msg.getInt(0);
+      continue;
     }
   }
+}
+
+void loop()
+{
+  handleIncomingOSC();
 
   if (millis() - lastHeartbeat > heartbeatTimeout)
   {
@@ -480,8 +638,15 @@ void loop()
   {
     loopElias();
   }
-  if (game == "Andrea")
+  else if (game == "Andrea")
   {
     loopAndrea();
+  }
+  else
+  {
+    oled.clearDisplay();
+    oled.setCursor(0, 0);
+    oled.println("No game connected");
+    oled.display();
   }
 }
